@@ -1,0 +1,291 @@
+---
+title: "Exploring Tornado data"
+author: "Camden Foster"
+date: "`r format(Sys.Date(), '%B %e, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+tornados <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-05-16/tornados.csv')
+library(ggplot2)
+library(ggridges)
+library(dplyr)
+library(usmap)
+library(plotly)
+library(statebins)
+library(stringr)
+library(MASS)
+library(maps)
+library(tidyr)
+```
+
+## Introduction
+
+The data used in this report was recorded by NOAA's National Weather Service Storm Prediction Center Severe Weather Maps, Graphics, and Data Page. This data was then cleaned and posted on github and available to use. The data includes variables such as magnitude, loss, time, injuries, fatalities, and a bunch of geographical data to pinpoint where the tornado was located such as state, FIPS, longitude and latitude. The point of this report is to identify relationships between different variables and find out any correlations to better predict the strength of a tornado or the amount of tornadoes. 
+
+## Relations between Magnitude and Property Loss(in dollars)
+
+Meteorologists use the F-scale in order to record how strong a tornado was/will be. This scale is from 0-5 and is determined by estimated wind speeds as well as estimated property loss. While this data set does not happen to have wind speeds, it does have property loss so we can see if magnitude and property loss is highly related.
+
+```{r, echo = FALSE, warning = FALSE}
+p <- ggplot(tornados) +
+    geom_boxplot(aes(x = mag, y = loss),
+                 notch = TRUE, varwidth = TRUE,
+                 outlier.color = NA) +
+    xlab(NULL) 
+p + geom_point(aes(x = mag, y = loss),
+               position =
+                   position_jitter(width = 0.1),
+               alpha = 0.05)
+magavg <- group_by(tornados, mag)|>
+  summarize(
+    avg_loss = mean(loss, na.rm = TRUE)
+  )|>
+  ungroup()
+q <- ggplot(tornados) +
+    geom_histogram(aes(x = log(loss),
+                       y = after_stat(density),binwidth = 10),
+                   color = "black",
+                   fill = "grey")
+q + facet_wrap(~ mag)
+ggplot(tornados, aes(x = log(loss), y = mag)) +
+    geom_point(position = "jitter", size = 0.05, alpha = 0.3) +
+    ylab(NULL) + xlab("Log of loss") + theme(axis.title = element_text(size = 14, face = "bold"))
+
+ggplot(tornados, aes(x = log(loss))) + geom_density(bw = 1) + facet_wrap(~ mag, ncol = 2) +
+    ggtitle("Facets") + xlab("Log of loss") + theme(axis.title = element_text(size = 14, face = "bold"))
+kbl <- knitr::kable(magavg, format = "html", col.names = c("Magnitude", "Average loss in property damage"))
+kableExtra::kable_styling(kbl, full_width = FALSE)
+```
+
+With all of the extreme values in the estimated property lost I decided that looking at a log of the data would be the best way to view some of the distributions. Looking at both the strip chart and the proportion faceted lines it is easy to see that as the magnitude of the tornado increases, property loss also increases and the bulk of the data shifts farther and farther away. Looking at the faceted bar chart this is also easy to see as the distribution moves further and further right with the magnitude increasing. To understand the true difference in values and not looking at a logarithm of the function I included a table showing the difference in averages between the different magnitudes. Because the differences in averages between 0 and 5 is over 10,000 we see that it was necessary to create a logarithm function to better understand the distribution of the data. Overall using all of this we can see the strong relationship between the magnitude of the tornado and estimated property loss in dollars.
+
+## Number of Tornadoes by state
+
+Tornadoes are highly dependent on weather as to form they need warm and cold air meeting together. Therefore some states are going to experience more tornadoes than others. 
+
+```{r, echo = FALSE, warning=FALSE}
+tornados_by_state <- count(tornados, st)
+continous <- filter(tornados_by_state,st != "DC", st != "VI",st != "PR")
+statesss <- mutate(continous, "state" = state.name[match(st,state.abb)])
+sorted_states <- slice_max(statesss, n, n = 50)
+
+plot_usmap(data = statesss, regions = "state", values = "n", labels = TRUE) + ggtitle("Number of Tornadoes by State") + scale_fill_continuous(high = "red" ,low = "white")
+
+ggplot(statesss) +
+    geom_statebins(aes(fill = n, state = state)) +
+    coord_equal() +
+    theme_statebins() +
+    scale_fill_distiller(palette = "Reds", direction = 1) + 
+  ggtitle("Number of Tornadoes by State")
+
+gusa <- map_data("state")
+gcounty <- map_data("county")
+fipstab <-
+    transmute(maps::county.fips, fips, county = sub(":.*", "", polyname)) |>
+    unique() |>
+    separate(county, c("region", "subregion"), sep = ",")
+gcounty <- left_join(gcounty, fipstab, c("region", "subregion"))
+county_centroids <-
+    group_by(gcounty, fips) |>
+    summarize(x = mean(range(long)), y = mean(range(lat)))
+
+tornados_fixed <- tornados
+
+tornados_fixed$stf <- as.character(tornados_fixed$stf)
+tornados_fixed$f1 <- as.character(tornados_fixed$f1)
+tornados_fixed$f2 <- as.character(tornados_fixed$f2)
+tornados_fixed$f3 <- as.character(tornados_fixed$f3)
+tornados_fixed$f4 <- as.character(tornados_fixed$f4)
+tornados_fixed$f1 <- sprintf("%03d", as.numeric(tornados_fixed$f1))
+tornados_fixed$f2 <- sprintf("%03d", as.numeric(tornados_fixed$f2))
+tornados_fixed$f3 <- sprintf("%03d", as.numeric(tornados_fixed$f3))
+tornados_fixed$f4 <- sprintf("%03d", as.numeric(tornados_fixed$f4))
+tornados_fixed$stf <- sprintf("%02d", as.numeric(tornados_fixed$stf))
+tornados_fixed$fips_combined1 <- paste(tornados_fixed$stf, tornados_fixed$f1, sep = "")
+tornados_fixed$fips_combined2 <- paste(tornados_fixed$stf, tornados_fixed$f2, sep = "")
+tornados_fixed$fips_combined3 <- paste(tornados_fixed$stf, tornados_fixed$f3, sep = "")
+tornados_fixed$fips_combined4 <- paste(tornados_fixed$stf, tornados_fixed$f4, sep = "")
+
+
+counties1 <- count(tornados_fixed, fips_combined1)|>
+  mutate(county = fips_combined1)|>
+  rename(n1 = n)
+counties2 <- count(tornados_fixed, fips_combined2)|>
+  mutate(county = fips_combined2)|>
+  rename(n2 = n)
+counties3 <- count(tornados_fixed, fips_combined3)|>
+  mutate(county = fips_combined3)|>
+  rename(n3 = n)
+counties4 <- count(tornados_fixed, fips_combined4)|>
+  mutate(county = fips_combined4)|>
+  rename(n4 = n)
+q <- full_join(counties1, counties2, by = "county")
+w <- full_join(q,counties3, by = "county")
+e <- full_join(w, counties4, by = "county")
+
+matched_strings <- e$county[grepl(".*000$", e$county)]
+halt <- dplyr::select(e, county, n1, n2, n3,n4)|>
+  filter(! county %in% matched_strings)
+halt[is.na(halt)] <- 0
+t <- mutate(halt, n = n1+n2+n3+n4)|>
+  dplyr::select(county,n)|>
+  mutate(fips = as.integer(county))|>
+  dplyr::select(fips, n)
+j <- left_join(fipstab, t, "fips")|>
+  dplyr::select(fips,n)
+j[is.na(j)] <- 0
+
+j <- inner_join(j,county_centroids, "fips")
+
+kde2d <- function(x, y, h, n = 25, lims = c(range(x), range(y)), weights) {
+    nx <- length(x)
+    if (length(y) != nx)
+        stop("data vectors must be the same length")
+    if (any(!is.finite(x)) || any(!is.finite(y)))
+        stop("missing or infinite values in the data are not allowed")
+    if (any(!is.finite(lims)))
+        stop("only finite values are allowed in 'lims'")
+    n <- rep(n, length.out = 2L)
+    gx <- seq.int(lims[1L], lims[2L], length.out = n[1L])
+    gy <- seq.int(lims[3L], lims[4L], length.out = n[2L])
+    h <- if (missing(h))
+        c(MASS::bandwidth.nrd(x), MASS::bandwidth.nrd(y))
+    else rep(h, length.out = 2L)
+    if (any(h <= 0))
+        stop("bandwidths must be strictly positive")
+    h <- h / 4
+    ax <- outer(gx, x, "-") / h[1L]
+    ay <- outer(gy, y, "-") / h[2L]
+    dmx <- matrix(dnorm(ax), , nx)
+    if (! missing(weights))
+        dmx <- dmx %*% diag(weights)
+    z <- tcrossprod(dmx, matrix(dnorm(ay), , nx)) / (nx * h[1L] * h[2L])
+    list(x = gx, y = gy, z = z)
+}
+ds <- with(j,
+           kde2d(x, y, weights = n,
+                 n = 50,
+                 lims = c(-130, -60, 20, 50)))
+dsdf <- broom::tidy(ds) |>
+    rename(Lon = x, Lat = y, dens = z)
+pusa <- ggplot(gusa) +
+    geom_polygon(aes(long, lat, group = group),
+                 fill = NA,
+                 color = "grey") +
+    coord_map()
+pusa +
+    geom_contour(aes(Lon, Lat, z = dens),
+                 data = dsdf)
+
+pusa +
+    stat_contour(aes(Lon, Lat, z = dens,
+                     fill = after_stat(level)),
+                 data = dsdf,
+                 geom = "polygon",
+                 alpha = 0.2) + ggtitle("Contour Plot of Tornadoes")
+
+
+
+p <- ggplot(sorted_states) +
+    geom_col(aes(y = n,
+                 x = reorder(st, n)),
+             fill = "deepskyblue3") +
+    labs(y = "Tornadoes since 1950",
+         x = NULL) +
+    scale_y_continuous(
+        expand = expansion(mult = c(0, .1))) +
+  theme(axis.text=element_text(size=6),
+        axis.title=element_text(size=14,face="bold"), aspect.ratio = 2/1)
+p + coord_flip() + ggtitle("Number of tornadoes by state")
+```
+
+Looking at both the table and the Choropleth map of the United States Texas stands out as it has had more than two times the amount of tornadoes than the second state Oklahoma. This is due to the fact the geographical location of Texas being in the middle of the country as well as the sheer size of Texas.  You can also tell that the middle of the country appears to be more prone to tornadoes as the bulk of the tornadoes appear to happen there. Looking at the contour map it seems that Oklahoma is the most tornado dense area with density being the highest there. Very few amount of tornadoes appear to happen in the western states even with their size probably due to the dry conditions of most of those states. According to this data set as well it appears that all 50 states have had at least one tornado even in areas not known to have conditions for that such as Alaska. 
+
+## Patterns with time
+
+Obviously the number of tornadoes is going to increase or decrease depending on the month. Something that has also intrigued me is the question of has the amount of tornadoes increased by the year due to global warming?
+
+
+```{r, echo = FALSE, warning = FALSE}
+monthly <- count(tornados, mo)|>
+  mutate(month = month.abb[mo])
+yearly <- count(tornados, yr)
+state_by_month <- group_by(tornados,st,mo)|>
+  summarise(tornadoes_per_month = n())|>
+  filter(st == "TX" | st == "IA" | st == "OK" | st == "KS" | st == "FL")|>
+  ungroup()|>
+  mutate(month = month.abb[mo])
+monthly$month <- factor(monthly$month, levels=month.abb)
+state_by_month$month <- factor(state_by_month$month, levels=month.abb)
+
+ggplot(monthly, aes(x = month, y = n, group = 1)) + geom_point() + geom_line() + labs(x = "Year", y = "Amount")
+
+h <- ggplot(yearly, aes(x = yr, y = n, group = 1, text = n)) + geom_point() + geom_line() + labs(x = "Year", y = "Amount")
+
+ggplotly(h, tooltip = "text") |>
+    style(hoverlabel = list(bgcolor = "white"))
+
+ggplot(state_by_month, aes(x = month, y = tornadoes_per_month, color = st, group = st)) + geom_point() + geom_line() + labs(x = "Month", y = "Amount per month")
+```
+
+Tornado season seems to be the most active during the month of May with over 14,000 tornadoes recorded since 1950. Also interesting to note that half the months saw less than 4,000 tornadoes suggesting a strong relation between month and the amount of tornadoes. Spring appears to be the leader in terms of number of tornadoes per season which makes sense given tornadoes need warm and cold air to interact which is coming from the previous winter and the upcoming summer. Taking a look at the years there seems to be a parabolic relationship as generally the number of tornadoes seemed to increase starting in 1950 and peaking in 2006 but in recent years the number seems to be decreasing by a little bit. Looking at the amount of tornadoes by some of the states with the most tornadoes we see a very similar trend. One thing that did stick out however was the fact that Iowa and Florida had more tornadoes in June than in May like the overall data would suggest. Florida also seemed to have the flattest distribution out of the states shown which makes sense given the weather in Florida stays relatively the same throughout the seasons. 
+
+## Finding State Outliers
+
+Do different states experience different levels of severity with the tornadoes they experience? these next few graphs explore the average for each state of different variables that could help explain the severity of the tornadoes they experience
+
+```{r, echo = FALSE, warning=FALSE}
+state_avg <- group_by(tornados,st) |>
+  summarise(avg_tornadoes_per_year = n()/77,
+            avg_mag = mean(mag, na.rm = TRUE),
+            avg_inj = mean(inj, na.rm = TRUE),
+            avg_fat = mean(fat, na.rm = TRUE),
+            avg_loss = mean(loss, na.rm = TRUE),
+            avg_len = mean(len, na.rm = TRUE),
+            avg_wid = mean(wid, na.rm = TRUE),
+            n = n())|>
+  ungroup()
+
+p <- ggplot(state_avg) +
+    geom_point(aes(x = avg_len,
+                   y = avg_wid,
+                   text = paste(st),
+               size = n)) + ggtitle("Average Length vs Average Width by state") + xlab("Average Length") + ylab("Average Width")
+ggplotly(p, tooltip = "text") |>
+    style(hoverlabel = list(bgcolor = "white"))
+
+q <- ggplot(state_avg) +
+    geom_point(aes(x = avg_loss,
+                   y = avg_mag,
+                   text = paste(st),
+               size = n)) + ggtitle("Magnitude vs Loss") + xlab("Average Loss") + ylab("Average Magnitude")
+ggplotly(q, tooltip = "text") |>
+    style(hoverlabel = list(bgcolor = "white"))
+con <- filter(tornados, st == "CT")|>
+  dplyr::select(loss)
+
+b <- ggplot(state_avg) +
+    geom_point(aes(x = avg_inj,
+                   y = avg_fat,
+                   text = paste(st),
+               size = n)) + ggtitle("Average number Injuries vs Average Number of Fatalities") + xlab("Average nummber of Injuries") + ylab("Average number of Fatalities")
+ggplotly(b, tooltip = "text") |>
+    style(hoverlabel = list(bgcolor = "white"))
+```
+
+Looking at this we can see that on average the length and width of the tornado have a linear relationship. We can also identify some of the outliers in this data set which includes Alaska which had an average length and width close to 0 which makes sense as only 4 tornadoes have been recorded meaning a small sample size and can lead to an outlying value. 
+Another outlier is Rhode Island as it appears to be the only point to not to follow the linear relationship between length and width with the width being a lot higher than expected. Missouri and Arkansas seem to be the two states with the highest area affected with the average lengths and widths being the highest. 
+Looking at two other variables, loss and magnitude, Connecticut by far stands out with the the highest avg_loss. Looking through the data it did not seem that any values stuck out as outliers but there did appear to be a lot of consistently high values.
+In terms of injuries and fatalities it appears Massachusetts had the worst tornadoes as they stick out in both the injuries and fatalities. This makes a little sense as Massachusetts is a highly dense area leading for more chances of injury and fatality while it is also really high for average magnitude. 
+
+## Conclusion
+
+Throughout this report we looked at a lot of relationships in relation to tornadoes including Magnitude, time, and states as primary independent variables. 
+
+During this we have learned that magnitude and property loss is highly related with higher numbers on the EF scale relating to more property loss. This difference is relatively large with f0 being 1000 times smaller than f5. 
+
+Geographical location is a huge factor when it comes to the amount of tornadoes a state gets as the states with the most tornadoes existed in near the middle of the country. Western states seem to be completely unaffected by tornadoes altogether. Location also matters for the timing of these tornadoes as states such as Florida do not experience a huge change in the amount of tornadoes even with the seasons changing. The amount of tornadoes has increased since 1950 but in recent years it appears there has been a slow decrease since 2006. In addition to the yr the monthly data shows a strong relationship in the month and the amount of tornadoes with a large portion of tornadoes coming in April, May, and June.
+
+Looking at outliers in the final sets of data we can see that some of the states in the New England area such as Massachusetts and Connecticut while they do not experience the most tornadoes actually experience worse tornadoes in terms of magnitude and property loss.
